@@ -20,7 +20,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install requests colorama fake_useragent pymongo python-dotenv psutil
+          pip install requests colorama fake_useragent pymongo python-dotenv psutil certifi
       
       - name: Build executable with PyInstaller
         run: |
@@ -46,7 +46,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install requests colorama fake_useragent pymongo python-dotenv psutil
+          pip install requests colorama fake_useragent pymongo python-dotenv psutil certifi
       
       - name: Build executable with PyInstaller
         run: |
