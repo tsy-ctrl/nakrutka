@@ -946,11 +946,12 @@ def clean_nickname(nickname):
     return nickname
 
 def check_key():
-    key_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keys/key.txt")
+    key_file_path = "keys/key.txt"
     try:
         with open(key_file_path, "r", encoding="utf-8") as key_file:
             key_value = key_file.read().strip()
     except Exception as e:
+        print("File not found")
         sys.exit(1)
     
     key_record = db.keys.find_one({"key": key_value})
