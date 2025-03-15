@@ -6,6 +6,7 @@ import logging
 import urllib3
 import csv
 import os
+import certifi
 import threading
 import sys
 import colorama
@@ -49,8 +50,9 @@ MAX_SUBS = 0
 CURRENT_SUBS = 0
 CURRENT_LIKES = 0
 GLOBAL_PROXY = None
+mongo_client = MongoClient("mongodb+srv://nakrutka:h2m9zTE9AHD2yknB@nakrutka.baw2l.mongodb.net/", 
+                          tlsCAFile=certifi.where())
 
-mongo_client = MongoClient("mongodb+srv://nakrutka:h2m9zTE9AHD2yknB@nakrutka.baw2l.mongodb.net/")
 db = mongo_client['onlyfans_db']
 subs_and_likes_collection = db.SubsAndLikes
 
