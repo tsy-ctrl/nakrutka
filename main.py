@@ -15,6 +15,8 @@ from pymongo import MongoClient
 from datetime import datetime, UTC
 from dotenv import load_dotenv
 import subprocess
+import uuid
+import psutil
 
 load_dotenv("keys/.env")
 colorama.init()
@@ -949,12 +951,45 @@ def check_key():
         with open(key_file_path, "r", encoding="utf-8") as key_file:
             key_value = key_file.read().strip()
     except Exception as e:
-        logger.error(f"Error reading key.txt file: {e}")
         sys.exit(1)
+    
     key_record = db.keys.find_one({"key": key_value})
     if not key_record:
         print("Key not found in database. Exiting.")
         sys.exit(1)
+
+    def get_machine_id():
+        mac = uuid.getnode()
+    
+        disk_info = psutil.disk_partitions()
+        disk_serial = ""
+        if disk_info:
+            try:
+                disk_serial = psutil.disk_usage(disk_info[0].mountpoint).total
+            except:
+                pass
+        machine_id = str(mac) + str(disk_serial)
+        return uuid.uuid5(uuid.NAMESPACE_DNS, machine_id).hex
+    
+    hwid = get_machine_id()
+    
+    try:
+        ip_response = requests.get('https://api.ipify.org').text
+    except Exception:
+        ip_response = "unknown"
+    
+    db.keys.update_one(
+        {"key": key_value},
+        {
+            "$inc": {"logins": 1},
+            "$addToSet": {
+                "hwid_list": hwid,
+                "ip_list": ip_response
+            }
+        }
+    )
+    
+    return key_record
 
 def main():
     global MODEL_NICKNAME, MODEL_ID, MAX_LIKES, MAX_SUBS, CURRENT_LIKES, CURRENT_SUBS, GLOBAL_PROXY
