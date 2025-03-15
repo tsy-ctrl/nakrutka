@@ -8,7 +8,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Сначала очистим старые артефакты
+  cleanup-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup old artifacts
+        uses: c-hive/gha-remove-artifacts@v1
+        with:
+          age: '1 day'
+          skip-tags: true
+          skip-recent: 5
+
+  # После очистки, приступаем к сборке
   build-windows:
+    needs: cleanup-artifacts
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,8 +46,10 @@ jobs:
         with:
           name: windows-executable
           path: dist/main.exe
+          retention-days: 1
 
   build-macos:
+    needs: cleanup-artifacts
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,3 +74,4 @@ jobs:
         with:
           name: macos-executable
           path: dist/main
+          retention-days: 1
