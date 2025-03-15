@@ -1,12 +1,10 @@
 name: Build Python Executables
-
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -26,14 +24,14 @@ jobs:
       
       - name: Build executable with PyInstaller
         run: |
-          pyinstaller --onefile main.py
+          pyinstaller --onefile --hidden-import=fake_useragent.data --add-data "$(pip show fake_useragent | grep Location | cut -d ' ' -f 2)/fake_useragent/data;fake_useragent/data" main.py
+        shell: bash
       
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
           name: windows-executable
           path: dist/main.exe
-
   build-macos:
     runs-on: macos-latest
     steps:
@@ -52,7 +50,8 @@ jobs:
       
       - name: Build executable with PyInstaller
         run: |
-          pyinstaller --onefile main.py
+          pyinstaller --onefile --hidden-import=fake_useragent.data --add-data "$(pip show fake_useragent | grep Location | cut -d ' ' -f 2)/fake_useragent/data:fake_useragent/data" main.py
+        shell: bash
       
       - name: Upload macOS executable
         uses: actions/upload-artifact@v4
