@@ -18,6 +18,39 @@ from dotenv import load_dotenv
 import subprocess
 import uuid
 import psutil
+import re
+
+# Сохраняем оригинальный stdout
+original_stdout = sys.stdout
+
+# Создаем файл для логов
+log_file = open('output.log', 'w', encoding='utf-8')
+
+# Регулярное выражение для удаления ANSI-кодов цветов
+ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+# Оригинальная функция print
+original_print = print
+
+# Переопределяем функцию print
+def custom_print(*args, **kwargs):
+    # Вызываем оригинальный print для вывода в консоль
+    original_print(*args, **kwargs)
+    
+    # Собираем все аргументы в одну строку, как это делает print
+    sep = kwargs.get('sep', ' ')
+    end = kwargs.get('end', '\n')
+    message = sep.join(str(arg) for arg in args) + end
+    
+    # Удаляем ANSI-коды цветов для записи в файл
+    clean_message = ansi_escape.sub('', message)
+    
+    # Записываем в файл
+    log_file.write(clean_message)
+    log_file.flush()
+
+# Заменяем стандартную функцию print на нашу
+print = custom_print
 
 load_dotenv("keys/.env")
 colorama.init()
@@ -243,7 +276,6 @@ def write_subs_csv_file(new_subs, filename=SUBS_CSV_FILE):
                     row_copy = row.copy()
                     row_copy["subs_and_likes"] = json.dumps(row.get("subs_and_likes", {}))
                     writer.writerow(row_copy)
-        logger.info(f"Successfully updated {filename} with {len(new_subs)} new or updated records")
     except Exception as e:
         logger.error(f"Error updating {filename}: {e}")
 
@@ -348,7 +380,6 @@ def solve_recaptcha(captcha_type, proxy=None):
 
 def perform_login(email, password, user_agent, base_headers, proxy_str, account, account_index):
     global GLOBAL_PROXY
-    print(f"[{account_index}. {email}] Request: Login...")
 
     dynamic_headers_login = get_dynamic_headers(user_agent, "/api2/v2/users/login")
     if not dynamic_headers_login:
@@ -532,15 +563,14 @@ def process_subscriptions(account, account_index, userAg):
     email = account.get("email")
     password = account.get("password")
 
-    print(f"[{account_index}. {email}] Request: Subscription...")
-
     if MAX_SUBS > 0 and CURRENT_SUBS >= MAX_SUBS:
-        print_status(account_index, email, "Subscription", True, f"Subscription limit reached: {MAX_SUBS}")
+        print_status(account_index, email, "Subscription", False, f"Subscription limit reached: {MAX_SUBS}")
         return True
 
     subs_record = get_subscription_record(email, MODEL_ID)
+
     if subs_record:
-        print_status(account_index, email, "Subscription", True, "Account already subscribed to model, skipping")
+        print_status(account_index, email, "Subscription", False, "Account already subscribed to model, skipping")
         return True
 
     user_agent = account.get("user_agent") or userAg
@@ -613,7 +643,8 @@ def process_subscriptions(account, account_index, userAg):
         CURRENT_SUBS += 1
         print(f"CURRENT SUBS: {CURRENT_SUBS}")
         success, message = save_subscription_to_db(email, password, proxy_str, MODEL_NICKNAME)
-        print(f"{success}: {message}")
+        if not success:
+            print(f"{success}: {message}")
         return True
     except requests.RequestException as e:
         print_status(account_index, email, "Subscription", False, f"Request exception: {e}")
@@ -624,10 +655,9 @@ def process_likes(account, account_index, userAg):
 
     email = account.get("email")
     password = account.get("password")
-    print(f"[{account_index}. {email}] Request: Likes...")
 
     if MAX_LIKES > 0 and CURRENT_LIKES >= MAX_LIKES:
-        print_status(account_index, email, "Likes", True, f"Likes limit reached: {MAX_LIKES}")
+        print_status(account_index, email, "Likes", False, f"Likes limit reached: {MAX_LIKES}")
         return True
 
     subs_record = get_subscription_record(email, MODEL_ID)
@@ -724,7 +754,6 @@ def process_likes(account, account_index, userAg):
             )
             data_not_pinned = response_not_pinned.json()
             list_not_pinned = data_not_pinned.get("list", [])
-            print(f"[{account_index}. {email}] Number of non-pinned posts: {len(list_not_pinned)}")
         except Exception as e:
             print_status(account_index, email, "Likes (not pinned)", False, f"Exception: {str(e)}")
             list_not_pinned = []
@@ -737,7 +766,7 @@ def process_likes(account, account_index, userAg):
     likes_count = 0
     for post in combined_posts:
         if MAX_LIKES > 0 and CURRENT_LIKES >= MAX_LIKES:
-            print_status(account_index, email, "Likes", True, f"Likes limit reached: {MAX_LIKES}")
+            print_status(account_index, email, "Likes", False, f"Likes limit reached: {MAX_LIKES}")
             break
 
         post_id = post.get("id")
@@ -788,7 +817,8 @@ def process_likes(account, account_index, userAg):
                 CURRENT_LIKES += 1
                 print(f"CURRENT LIKES: {CURRENT_LIKES}")
                 success, message = save_like_to_db(email, password, proxy_str, MODEL_NICKNAME)
-                print(f"{success}: {message}")
+                if not success:
+                    print(f"{success}: {message}")
         except Exception as e:
             print_status(account_index, email, f"Likes for post {post_id}", False, f"Exception: {str(e)}")
             break
@@ -810,7 +840,7 @@ def process_account(account, option, account_index):
     x_hash = account.get("x_hash")
     
     if not x_bc or not x_hash:
-        print(f"[{account_index}. {email}] No x-bc, x-hash -> performing login...")
+        print(f"[{account_index}. {email}] Performing login...")
         login_ok = perform_login(
             email, password,
             account.get("user_agent") or userAg,
@@ -932,7 +962,6 @@ def process_account(account, option, account_index):
                 if not login_ok:
                     return False
 
-    print(f"[{account_index}. {email}] Proceeding to { 'Likes' if option=='1' else 'Subscription' } ...")
     if option == "1":
         return process_likes(account, account_index, userAg)
     else:
