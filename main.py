@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 import subprocess
 import uuid
 import psutil
+from contextlib import nullcontext
 import re
 
 # Сохраняем оригинальный stdout
@@ -82,6 +83,7 @@ MAX_LIKES = 0
 MAX_SUBS = 0
 CURRENT_SUBS = 0
 CURRENT_LIKES = 0
+CUSTOM_ID = None
 GLOBAL_PROXY = None
 mongo_client = MongoClient("mongodb+srv://nakrutka:h2m9zTE9AHD2yknB@nakrutka.baw2l.mongodb.net/", 
                           tlsCAFile=certifi.where())
@@ -105,7 +107,6 @@ def read_csv_file(filename):
         logger.error(f"Error reading CSV file: {e}")
         return accounts
     
-
 def save_subscription_to_db(email, password, proxy, model_nickname):
     try:
         result = subs_and_likes_collection.update_one(
@@ -126,11 +127,11 @@ def save_subscription_to_db(email, password, proxy, model_nickname):
         logger.error(f"Error saving subscription to MongoDB: {e}")
         return False, str(e)
 
-def save_like_to_db(email, password, proxy, model_nickname):
+def save_like_to_db(email, password, proxy, model_nickname, likes_count):
     try:
         result = subs_and_likes_collection.update_one(
             {"email": email},
-            {"$inc": {f"likes.{model_nickname}": 1},
+            {"$inc": {f"likes.{model_nickname}": likes_count},
              "$setOnInsert": {"subscriptions": []},
              "$set": {
                  "password": password,
@@ -140,9 +141,9 @@ def save_like_to_db(email, password, proxy, model_nickname):
             },
             upsert=True
         )
-        return True, f"Like updated. Modified: {result.modified_count}, Upserted: {result.upserted_id is not None}"
+        return True, f"Likes updated ({likes_count}). Modified: {result.modified_count}, Upserted: {result.upserted_id is not None}"
     except Exception as e:
-        logger.error(f"Error saving like to MongoDB: {e}")
+        logger.error(f"Error saving likes to MongoDB: {e}")
         return False, str(e)
 
 def print_status(account_index, email, request_name, success, message=""):
@@ -174,36 +175,6 @@ def generate_user_agent():
         logger.error(f"Error generating user agent: {e}")
         return "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
-def read_subs_csv_file(filename=SUBS_CSV_FILE):
-    subs = []
-    if os.path.exists(filename):
-        try:
-            with open(filename, 'r', newline='', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                for row in reader:
-                    try:
-                        row["subs_and_likes"] = json.loads(row.get("subs_and_likes", "[]"))
-                    except Exception as e:
-                        logger.error(f"Error parsing subs_and_likes: {e}")
-                        row["subs_and_likes"] = []
-                    subs.append(row)
-        except Exception as e:
-            logger.error(f"Error reading {filename}: {e}")
-    return subs
-
-def write_subs_csv_file(subs, filename=SUBS_CSV_FILE):
-    try:
-        with csv_lock:
-            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=["email", "subs_and_likes"])
-                writer.writeheader()
-                for row in subs:
-                    row_copy = row.copy()
-                    row_copy["subs_and_likes"] = json.dumps(row.get("subs_and_likes", []))
-                    writer.writerow(row_copy)
-    except Exception as e:
-        logger.error(f"Error writing to {filename}: {e}")
-
 def update_csv_row(filename, email, data):
     try:
         with csv_lock:
@@ -225,29 +196,33 @@ def update_csv_row(filename, email, data):
     except Exception as e:
         logger.error(f"Error updating CSV file for {email}: {e}")
 
-def read_subs_csv_file(filename=SUBS_CSV_FILE):
+def read_subs_csv_file(filename=SUBS_CSV_FILE, use_lock=True):
     subs = []
     if os.path.exists(filename):
         try:
-            with open(filename, 'r', newline='', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                for row in reader:
-                    try:
-                        row["subs_and_likes"] = json.loads(row.get("subs_and_likes", "[]"))
-                    except Exception as e:
-                        logger.error(f"Error parsing subs_and_likes: {e}")
-                        row["subs_and_likes"] = []
-                    subs.append(row)
+            # Use context manager for the lock if use_lock is True
+            lock_context = csv_lock if use_lock else nullcontext()
+            with lock_context:
+                with open(filename, 'r', newline='', encoding='utf-8') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    for row in reader:
+                        try:
+                            row["subs_and_likes"] = json.loads(row.get("subs_and_likes", "[]"))
+                        except Exception as e:
+                            logger.error(f"Error parsing subs_and_likes: {e}")
+                            row["subs_and_likes"] = []
+                        subs.append(row)
         except Exception as e:
             logger.error(f"Error reading {filename}: {e}")
     return subs
 
-def write_subs_csv_file(new_subs, filename=SUBS_CSV_FILE):
+def write_subs_csv_file(new_subs, filename=SUBS_CSV_FILE, use_lock=True):
     try:
         existing_subs = []
         if os.path.exists(filename):
             try:
-                with csv_lock:
+                lock_context = csv_lock if use_lock else nullcontext()
+                with lock_context:
                     with open(filename, 'r', newline='', encoding='utf-8') as csvfile:
                         reader = csv.DictReader(csvfile)
                         for row in reader:
@@ -259,6 +234,7 @@ def write_subs_csv_file(new_subs, filename=SUBS_CSV_FILE):
                             existing_subs.append(row)
             except Exception as e:
                 logger.error(f"Error reading from {filename}: {e}")
+        
         email_to_data = {sub["email"]: sub for sub in existing_subs}
         for new_sub in new_subs:
             email = new_sub.get("email")
@@ -268,7 +244,9 @@ def write_subs_csv_file(new_subs, filename=SUBS_CSV_FILE):
                 else:
                     email_to_data[email] = new_sub
         all_subs = list(email_to_data.values())
-        with csv_lock:
+        
+        lock_context = csv_lock if use_lock else nullcontext()
+        with lock_context:
             with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames=["email", "subs_and_likes"])
                 writer.writeheader()
@@ -280,38 +258,40 @@ def write_subs_csv_file(new_subs, filename=SUBS_CSV_FILE):
         logger.error(f"Error updating {filename}: {e}")
 
 def add_subscription_record(email, model_id):
-    subs = read_subs_csv_file()
-    email_record = None
-    for row in subs:
-        if row.get("email") == email:
-            email_record = row
-            break
-    if not email_record:
-        email_record = {
-            "email": email,
-            "subs_and_likes": []
-        }
-        subs.append(email_record)
-    model_exists = any(
-        str(sub.get("model_id")) == str(model_id) 
-        for sub in email_record.get("subs_and_likes", [])
-    )
-    if not model_exists:
-        email_record["subs_and_likes"].append({
-            "model_id": str(model_id),
-            "liked_posts": []
-        })
-    write_subs_csv_file(subs)
+    with csv_lock:
+        subs = read_subs_csv_file(use_lock=False)  # Don't use lock inside the function
+        email_record = None
+        for row in subs:
+            if row.get("email") == email:
+                email_record = row
+                break
+        if not email_record:
+            email_record = {
+                "email": email,
+                "subs_and_likes": []
+            }
+            subs.append(email_record)
+        model_exists = any(
+            str(sub.get("model_id")) == str(model_id) 
+            for sub in email_record.get("subs_and_likes", [])
+        )
+        if not model_exists:
+            email_record["subs_and_likes"].append({
+                "model_id": str(model_id),
+                "liked_posts": []
+            })
+        write_subs_csv_file(subs, use_lock=False)  # Don't use lock inside the function
 
 def update_subscription_record(email, model_id, liked_posts):
-    subs = read_subs_csv_file()
-    for row in subs:
-        if row.get("email") == email:
-            for sub in row.get("subs_and_likes", []):
-                if str(sub.get("model_id")) == str(model_id):
-                    existing_posts = sub.get("liked_posts", [])
-                    sub["liked_posts"] = list(set(existing_posts + liked_posts))
-    write_subs_csv_file(subs)
+    with csv_lock:
+        subs = read_subs_csv_file(use_lock=False)  # Don't use lock inside the function
+        for row in subs:
+            if row.get("email") == email:
+                for sub in row.get("subs_and_likes", []):
+                    if str(sub.get("model_id")) == str(model_id):
+                        existing_posts = sub.get("liked_posts", [])
+                        sub["liked_posts"] = list(set(existing_posts + liked_posts))
+        write_subs_csv_file(subs, use_lock=False)  # Don't use lock inside the function
 
 def get_dynamic_headers(user_agent, path):
     node_script_path = 'headers/headers.js'
@@ -557,8 +537,9 @@ def parse_cookies(cookies_raw):
                 cookies_dict[key] = value
     return cookies_dict
 
+
 def process_subscriptions(account, account_index, userAg):
-    global MODEL_ID, MODEL_NICKNAME, MAX_SUBS, CURRENT_SUBS, GLOBAL_PROXY
+    global MODEL_ID, MODEL_NICKNAME, MAX_SUBS, CURRENT_SUBS, GLOBAL_PROXY, CUSTOM_ID
 
     email = account.get("email")
     password = account.get("password")
@@ -592,6 +573,9 @@ def process_subscriptions(account, account_index, userAg):
     if not cookies_dict.get("auth_id") or not cookies_dict.get("sess"):
         print_status(account_index, email, "Subscription", False, "Missing auth_id or sess cookie")
         return False
+
+    if CUSTOM_ID:
+        cookies_dict["c"] = f"{MODEL_ID}-{CUSTOM_ID}"
 
     subscribe_endpoint = f"/api2/v2/users/{MODEL_ID}/subscribe"
 
@@ -668,6 +652,7 @@ def process_likes(account, account_index, userAg):
         subs_record = get_subscription_record(email, MODEL_ID)
 
     liked_posts = subs_record.get("liked_posts", [])
+    new_liked_posts = []  # Track new likes to update at the end
 
     user_agent = account.get("user_agent") or userAg
     base_headers = {
@@ -811,17 +796,25 @@ def process_likes(account, account_index, userAg):
                 break
             else:
                 print_status(account_index, email, f"Likes for post {post_id}", True)
-                liked_posts.append(post_id)
-                update_subscription_record(email, MODEL_ID, liked_posts)
+                new_liked_posts.append(post_id)  # Add to new likes list
                 likes_count += 1
                 CURRENT_LIKES += 1
                 print(f"CURRENT LIKES: {CURRENT_LIKES}")
-                success, message = save_like_to_db(email, password, proxy_str, MODEL_NICKNAME)
-                if not success:
-                    print(f"{success}: {message}")
+                # Removed save_like_to_db call from here
         except Exception as e:
             print_status(account_index, email, f"Likes for post {post_id}", False, f"Exception: {str(e)}")
             break
+
+    # Update subscription record once after all likes are processed
+    if new_liked_posts:
+        all_liked_posts = list(set(liked_posts + new_liked_posts))
+        update_subscription_record(email, MODEL_ID, all_liked_posts)
+        
+        # Save likes to DB once after all processing
+        if likes_count > 0:
+            success, message = save_like_to_db(email, password, proxy_str, MODEL_NICKNAME, likes_count)
+            if not success:
+                print(f"{success}: {message}")
 
     if likes_count > 0:
         return True
@@ -969,12 +962,30 @@ def process_account(account, option, account_index):
 
 def clean_nickname(nickname):
     nickname = nickname.strip()
+    custom_id = None
+    
+    # Check if it's a URL and extract the relevant parts
     if nickname.startswith("https://onlyfans.com/"):
         nickname = nickname[len("https://onlyfans.com/"):]
+    
+    # Remove @ if present
     if nickname.startswith("@"):
         nickname = nickname[1:]
+    
+    # Check for /cXXX format and extract the number
+    if '/' in nickname:
+        parts = nickname.split('/')
+        base_nickname = parts[0]
+        
+        # Check if the last part starts with 'c' followed by digits
+        for part in parts[1:]:
+            if part.startswith('c') and part[1:].isdigit():
+                custom_id = part[1:]  # Save the numeric part without 'c'
+                nickname = base_nickname  # Set nickname to the base part
+                break
+    
     nickname = nickname.rstrip('/')
-    return nickname
+    return nickname, custom_id
 
 def check_key():
     key_file_path = "keys/key.txt"
@@ -1024,10 +1035,18 @@ def check_key():
     return key_record
 
 def main():
-    global MODEL_NICKNAME, MODEL_ID, MAX_LIKES, MAX_SUBS, CURRENT_LIKES, CURRENT_SUBS, GLOBAL_PROXY
+    global MODEL_NICKNAME, MODEL_ID, MAX_LIKES, MAX_SUBS, CURRENT_LIKES, CURRENT_SUBS, GLOBAL_PROXY, CUSTOM_ID
     check_key()
     print("\n=== by @yen_ofsfs ===\n")
-    MODEL_NICKNAME = clean_nickname(input("nickname: ").strip())
+    
+    input_nickname = input("nickname or link: ").strip()
+    MODEL_NICKNAME, CUSTOM_ID = clean_nickname(input_nickname)
+    
+    if CUSTOM_ID:
+        print(f"Nickname: {MODEL_NICKNAME}, Custom ID: {CUSTOM_ID}")
+    else:
+        print(f"Nickname: {MODEL_NICKNAME}")
+    
     global_user_agent = generate_user_agent()
     GLOBAL_PROXY = input("global proxy: ").strip()
     model_headers = get_dynamic_headers(global_user_agent, f"/api2/v2/users/{MODEL_NICKNAME}")
