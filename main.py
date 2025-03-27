@@ -827,6 +827,9 @@ def register_account(proxy_str, account_index):
         "x_bc": x_bc_value,
         "x_hash": x_hash_value,
     }
+    
+    print(account_data)
+    append_data_csv_row(account_data)
 
     return True, account_data
 
@@ -1444,7 +1447,7 @@ def main():
         print("Invalid operation. Exit.")
         return
     
-    if operation in ["2", "3"]:
+    if operation in ["1", "2", "3"]:
         GLOBAL_PROXY = input("global proxy: ").strip()
         input_nickname = input("nickname or link: ").strip()
         MODEL_NICKNAME, CUSTOM_ID = clean_nickname(input_nickname)
@@ -1515,7 +1518,7 @@ def main():
     except ValueError:
         worker_count = 1
     
-    if operation in ["2", "3"]:
+    if operation in ["1", "2", "3"]:
         accounts = read_csv_file(os.path.join('data', 'data.csv'))
         if len(accounts) == 0:
             logger.error("No accounts found in data/data.csv. Add them manually or register new ones.")
